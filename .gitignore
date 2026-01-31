@@ -1,0 +1,27 @@
+# Logs
+logs/
+*.log
+
+# Lock files
+*.lock
+
+# Status/history (generated at runtime)
+status.json
+history.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/
