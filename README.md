@@ -81,6 +81,18 @@ The application uses a modern dark theme interface built with CustomTkinter:
 - **Rounded Widgets:** Modern card-based layout with rounded corners
 - **Visual Feedback:** Pulsing status indicator, color-coded success/failure states
 - **Responsive Layout:** Window can be resized while maintaining proper proportions
+- **Pause/Resume:** Safely pause processing between files for transport
+
+## Pause Feature
+
+Designed for field use where you may need to move locations mid-session:
+
+1. **Click Pause** → Status shows "PAUSING" (amber, pulsing)
+2. **Current file completes** → Status changes to "PAUSED" (amber, static)
+3. **Safe to close laptop** and move to new location
+4. **Click Resume** → Processing continues with remaining queue
+
+The pause feature waits for the current file to finish (art-cli/ffmpeg cannot be interrupted mid-process), then holds the queue until you're ready to continue.
 
 ---
 ### For Claude Code Manifest
