@@ -26,6 +26,40 @@ file_queue = queue.Queue()
 queued_files = set()
 queued_files_lock = threading.Lock()
 
+# Pause control - shared between GUI and engine
+_pause_control_path = None
+_pause_lock = threading.Lock()
+
+
+def get_pause_state():
+    """Read the current pause state from control file."""
+    global _pause_control_path
+    if not _pause_control_path or not os.path.exists(_pause_control_path):
+        return {"paused": False, "pause_requested": False}
+    try:
+        with open(_pause_control_path, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {"paused": False, "pause_requested": False}
+
+
+def set_pause_state(paused=None, pause_requested=None):
+    """Update the pause state control file."""
+    global _pause_control_path
+    if not _pause_control_path:
+        return
+    with _pause_lock:
+        state = get_pause_state()
+        if paused is not None:
+            state["paused"] = paused
+        if pause_requested is not None:
+            state["pause_requested"] = pause_requested
+        try:
+            with open(_pause_control_path, 'w') as f:
+                json.dump(state, f)
+        except Exception as e:
+            logging.error(f"Failed to write pause state: {e}")
+
 
 def wait_for_file_to_stabilize(file_path: str, delay: int = 5):
     """Waits for the file to stop changing size."""
@@ -59,8 +93,22 @@ def worker(q: queue.Queue, config: ConfigParser):
     processing_folder = os.path.expanduser(config['Paths'].get('processing', ''))
 
     while True:
-        original_path = q.get()
-        if original_path is None: # Add a way to stop the worker
+        # Check if paused before getting next file
+        while True:
+            pause_state = get_pause_state()
+            if pause_state.get("paused", False):
+                logging.info("Engine is paused. Waiting to resume...")
+                time.sleep(1)
+                continue
+            break
+
+        # Use timeout so we can check pause state periodically
+        try:
+            original_path = q.get(timeout=1)
+        except queue.Empty:
+            continue
+
+        if original_path is None:  # Signal to stop the worker
             break
 
         file_path = original_path
@@ -75,7 +123,7 @@ def worker(q: queue.Queue, config: ConfigParser):
             continue
 
         logging.info(f"Worker processing file from queue: {file_path}")
-        time.sleep(10) # Initial delay
+        time.sleep(10)  # Initial delay
 
         if not wait_for_file_to_stabilize(file_path):
             logging.warning(f"Skipping {file_path}: Not stabilized or disappeared.")
@@ -96,13 +144,19 @@ def worker(q: queue.Queue, config: ConfigParser):
                 process_clip(file_path, config)
             except Exception as e:
                 logging.error(f"Error processing {file_path} from worker: {e}")
-        
+
         try:
             fcntl.flock(worker_lock.fileno(), fcntl.LOCK_UN)
             worker_lock.close()
         except:
             pass
         q.task_done()
+
+        # After completing a file, check if pause was requested
+        pause_state = get_pause_state()
+        if pause_state.get("pause_requested", False):
+            logging.info("Pause requested. Engine pausing after completing current file.")
+            set_pause_state(paused=True, pause_requested=False)
 
 def enqueue_file(file_path: str, file_queue: queue.Queue, source: str):
     """Safely add a file to the processing queue."""
@@ -230,6 +284,13 @@ def start_engine(config: ConfigParser):
     update_status(status_path, {"status": "idle", "file": "None", "progress": 0, "stage": "Idle"})
     with open(queue_file_path, 'w') as f:
         json.dump([], f)
+
+    # --- Initialize Pause Control File ---
+    global _pause_control_path
+    _pause_control_path = os.path.expanduser(paths.get('pause_file', os.path.join(os.path.dirname(status_path), 'pause_control.json')))
+    with open(_pause_control_path, 'w') as f:
+        json.dump({"paused": False, "pause_requested": False}, f)
+    logging.info(f"Pause control file: {_pause_control_path}")
 
     # --- Check for tool paths ---
     art_cli_path = os.path.expanduser(paths['art_cli'])

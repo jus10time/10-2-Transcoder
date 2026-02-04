@@ -104,6 +104,7 @@ class FieldIngestApp(ctk.CTk):
             'status_file': os.path.join(folder_path, '_internal', 'status.json'),
             'queue_file': os.path.join(folder_path, '_internal', 'queue.json'),
             'history_file': os.path.join(folder_path, '_internal', 'history.json'),
+            'pause_file': os.path.join(folder_path, '_internal', 'pause_control.json'),
         }
 
         try:
@@ -598,20 +599,39 @@ class MonitorFrame(ctk.CTkFrame):
         )
         self.stats_label.pack()
 
+        # Button frame for pause and stop
+        button_frame = ctk.CTkFrame(self, fg_color="transparent")
+        button_frame.pack(pady=(5, 10))
+
+        # Pause/Resume button
+        self.pause_btn = ctk.CTkButton(
+            button_frame,
+            text="⏸  Pause",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=COLORS["warning"],
+            hover_color="#ffcc44",
+            text_color=COLORS["bg_dark"],
+            height=45,
+            width=150,
+            corner_radius=10,
+            command=self.toggle_pause
+        )
+        self.pause_btn.pack(side="left", padx=(0, 10))
+
         # Stop button
         self.stop_btn = ctk.CTkButton(
-            self,
-            text="⏹  Stop Processing",
+            button_frame,
+            text="⏹  Stop",
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color=COLORS["error"],
             hover_color="#ff7777",
             text_color=COLORS["text"],
             height=45,
-            width=200,
+            width=150,
             corner_radius=10,
             command=self.app.on_closing
         )
-        self.stop_btn.pack(pady=(5, 10))
+        self.stop_btn.pack(side="left")
 
     def toggle_log(self):
         """Toggle log panel visibility."""
@@ -623,6 +643,57 @@ class MonitorFrame(ctk.CTkFrame):
             self.log_text.pack(fill="x", padx=10, pady=(0, 10))
             self.log_toggle.configure(text="▼ Collapse")
             self.log_expanded = True
+
+    def get_pause_state(self):
+        """Read current pause state from control file."""
+        pause_file = self.app.paths.get('pause_file', '')
+        if not pause_file or not os.path.exists(pause_file):
+            return {"paused": False, "pause_requested": False}
+        try:
+            with open(pause_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return {"paused": False, "pause_requested": False}
+
+    def set_pause_state(self, paused=None, pause_requested=None):
+        """Update the pause state control file."""
+        pause_file = self.app.paths.get('pause_file', '')
+        if not pause_file:
+            return
+        state = self.get_pause_state()
+        if paused is not None:
+            state["paused"] = paused
+        if pause_requested is not None:
+            state["pause_requested"] = pause_requested
+        try:
+            with open(pause_file, 'w') as f:
+                json.dump(state, f)
+        except Exception as e:
+            print(f"Failed to write pause state: {e}")
+
+    def toggle_pause(self):
+        """Toggle between pause and resume states."""
+        pause_state = self.get_pause_state()
+
+        if pause_state.get("paused", False):
+            # Currently paused - resume
+            self.set_pause_state(paused=False, pause_requested=False)
+            self.pause_btn.configure(
+                text="⏸  Pause",
+                fg_color=COLORS["warning"],
+                hover_color="#ffcc44"
+            )
+        elif pause_state.get("pause_requested", False):
+            # Pause already requested - do nothing (waiting for file to finish)
+            pass
+        else:
+            # Request pause
+            self.set_pause_state(pause_requested=True)
+            self.pause_btn.configure(
+                text="⏳ Pausing...",
+                fg_color=COLORS["text_dim"],
+                hover_color=COLORS["text_dim"]
+            )
 
     def go_back(self):
         """Return to setup screen."""
@@ -662,16 +733,49 @@ class MonitorFrame(ctk.CTkFrame):
         except Exception as e:
             print(f"Error updating monitor: {e}")
 
-        # Update status indicator
-        if is_idle:
+        # Read pause state
+        pause_state = self.get_pause_state()
+        is_paused = pause_state.get("paused", False)
+        pause_requested = pause_state.get("pause_requested", False)
+
+        # Update status indicator based on state
+        if is_paused:
+            # Fully paused
+            self.status_indicator.configure(text_color=COLORS["warning"])
+            self.status_text.configure(text="PAUSED", text_color=COLORS["warning"])
+            self.pause_btn.configure(
+                text="▶  Resume",
+                fg_color=COLORS["accent"],
+                hover_color=COLORS["accent_hover"]
+            )
+        elif pause_requested:
+            # Pause requested, finishing current file
+            self.pulse_state = (self.pulse_state + 1) % 2
+            color = COLORS["warning"] if self.pulse_state else "#cc8800"
+            self.status_indicator.configure(text_color=color)
+            self.status_text.configure(text="PAUSING", text_color=COLORS["warning"])
+            current_stage = f"Finishing file... ({current_stage})"
+        elif is_idle:
             self.status_indicator.configure(text_color=COLORS["text_dim"])
             self.status_text.configure(text="IDLE", text_color=COLORS["text_dim"])
+            # Reset pause button if not paused
+            self.pause_btn.configure(
+                text="⏸  Pause",
+                fg_color=COLORS["warning"],
+                hover_color="#ffcc44"
+            )
         else:
-            # Pulsing effect for active status
+            # Actively processing
             self.pulse_state = (self.pulse_state + 1) % 2
             color = COLORS["accent"] if self.pulse_state else COLORS["accent_dim"]
             self.status_indicator.configure(text_color=color)
             self.status_text.configure(text="PROCESSING", text_color=COLORS["accent"])
+            # Reset pause button if not paused
+            self.pause_btn.configure(
+                text="⏸  Pause",
+                fg_color=COLORS["warning"],
+                hover_color="#ffcc44"
+            )
 
         # Update file and stage
         self.file_label.configure(text=f"File: {current_file}")
