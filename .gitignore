@@ -5,9 +5,10 @@ logs/
 # Lock files
 *.lock
 
-# Status/history (generated at runtime)
+# Status/history/queue (generated at runtime)
 status.json
 history.json
+queue.json
 
 # Python
 __pycache__/

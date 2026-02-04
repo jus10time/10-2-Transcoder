@@ -1,272 +1,100 @@
-# Ingest Engine v2
+# Field Ingest Engine
 
-Automated video transcoding pipeline for ARRI footage. Watches a folder for new MXF/MOV files, applies ARRI looks using the ARRI Reference Tool, and transcodes to DNxHD for Avid compatibility.
+This application provides a standalone graphical user interface (GUI) to transcode ARRI camera footage (MXF/MOV) into DNxHD files for Avid compatibility. It is designed for easy use in the field on a macOS laptop.
 
-## Architecture Overview
+## First-Time Setup
+
+Before you can run the application, you need to install its dependencies.
+
+### 1. Install FFmpeg & ARRI Reference Tool
+
+-   **FFmpeg:** This is critical for video transcoding. The easiest way to install it on macOS is with [Homebrew](https://brew.sh/):
+    ```bash
+    brew install ffmpeg
+    ```
+-   **ARRI Reference Tool (ART):** The application uses ART to apply color science.
+    1.  Download and install the tool from the [official ARRI website](https://www.arri.com/en/learn-help/learn-help-camera-system/tools/arri-reference-tool).
+    2.  Open `config.ini` and verify that the `art_cli` path points to your installation of the `art-cmd` executable.
+
+### 2. Set up Python Environment
+
+This project uses a virtual environment to manage its Python packages, preventing conflicts with your system.
+
+1.  **Create Virtual Environment:** From inside the `field_ingest_app` directory, run this command once:
+    ```bash
+    python3 -m venv venv
+    ```
+2.  **Activate Environment:** Before installing packages or running the app, you must activate the environment:
+    ```bash
+    source venv/bin/activate
+    ```
+3.  **Install Python Packages:** With the environment active, install the required packages:
+    ```bash
+    pip3 install -r requirements.txt
+    ```
+
+## How to Run
+
+1.  Navigate to the `field_ingest_app` directory in your terminal.
+2.  Run the launcher script:
+    ```bash
+    ./launch.sh
+    ```
+This script automatically activates the virtual environment and starts the GUI application.
+
+## Using the Application
+
+### 1. Setup
+
+When you launch the app, you will see the setup screen.
+
+-   **Select Project Folder:** Click "Browse..." and select a main folder for your project (e.g., on an external drive). The application will automatically create a set of subdirectories inside this folder.
+-   **Start Processing:** Click this button to begin.
+
+The application will create the following structure inside your chosen Project Folder. All work happens here, and no media is copied to your local computer.
 
 ```
-[Dev Server - productiondev.am.com]          [Mac Studio - 192.168.99.171]
-┌─────────────────────────────────┐          ┌─────────────────────────────┐
-│  React Frontend (:3030)         │          │                             │
-│         │                       │          │  Ingest Engine              │
-│         ▼                       │          │  (main.py + API :8080)      │
-│  FastAPI Backend (:3031)  ─────────────►   │         │                   │
-│                                 │  HTTP    │         ▼                   │
-└─────────────────────────────────┘          │  [QNAP Storage]             │
-       Docker Containers                     │  [ARRI Tool]                │
-                                             │  [FFmpeg]                   │
-                                             └─────────────────────────────┘
+<Your Project Folder>/
+├── 01_WATCH_FOLDER/     (Drop your raw footage here)
+├── 02_OUTPUT/           (Transcoded DNxHD files appear here)
+├── 03_PROCESSED/        (Source files are moved here after success)
+├── 04_ERROR/            (Source files are moved here on failure)
+└── _internal/           (For logs and status files)
 ```
 
-## Quick Start
+### 2. Monitoring
 
-### New Machine Setup
+After starting, the view will switch to the monitoring dashboard.
 
-1. Copy this entire `ingest_engine_v2` folder to the new Mac:
-   ```bash
-   scp -r /Users/admin/ingest_engine_v2 newmac:~/
-   ```
+-   **Status Indicator:** A pulsing green dot shows when processing is active, with the current stage displayed (e.g., "FFmpeg Transcoding").
+-   **Progress Bar:** A smooth, animated progress bar showing percentage complete.
+-   **Queue Panel:** Files waiting to be processed, with file icons.
+-   **Completed Panel:** Processed files with success (✓) or failure (✗) indicators and duration.
+-   **Collapsible Log:** A detailed, real-time log panel that can be collapsed to save space.
+-   **Stats Bar:** Running totals of processed, failed, and queued files.
 
-2. Run the setup script:
-   ```bash
-   cd ~/ingest_engine_v2
-   ./setup_new_machine.sh
-   ```
+## GUI Features
 
-3. Follow the prompts to configure paths and verify dependencies
+The application uses a modern dark theme interface built with CustomTkinter:
 
-4. Update the web app on the dev server to point to the new Mac's IP:
-   ```bash
-   # SSH to dev server
-   ssh justin@productiondev.am.com
+- **Dark "Matrix" Theme:** Deep dark background with vibrant green accents, optimized for field use
+- **Rounded Widgets:** Modern card-based layout with rounded corners
+- **Visual Feedback:** Pulsing status indicator, color-coded success/failure states
+- **Responsive Layout:** Window can be resized while maintaining proper proportions
 
-   # Edit docker-compose.yml
-   cd ~/ingest-engine-web/docker
-   nano docker-compose.yml
-   # Change INGEST_ENGINE_API to new Mac's IP
+---
+### For Claude Code Manifest
 
-   # Rebuild and restart
-   docker-compose down
-   docker-compose up -d --build
-   ```
+Please add the following entry to the project manifest:
 
-### Starting/Stopping
-
-```bash
-# Start the engine
-~/start_ingest_engine.sh
-
-# Stop the engine
-~/stop_ingest_engine.sh
-
-# View logs
-tail -f ~/ingest_engine_v2/logs/ingest_engine.log
+```json
+{
+  "project_name": "Field Ingest Engine",
+  "version": "2.0.0",
+  "description": "A standalone GUI application for transcoding ARRI footage in the field.",
+  "entry_point": "field_ingest_app/launch.sh",
+  "type": "GUI Application",
+  "tags": ["python", "customtkinter", "video", "transcoding", "arri", "ffmpeg"]
+}
 ```
-
-## Current Deployment
-
-| Component | Location | URL/Port |
-|-----------|----------|----------|
-| Ingest Engine | Mac Studio (192.168.99.171) | :8080 (API) |
-| Web Frontend | productiondev.am.com | :3030 |
-| Web Backend | productiondev.am.com | :3031 |
-| Dashboard | Browser | http://productiondev.am.com:3030 |
-
-## Requirements
-
-### Software Dependencies
-
-| Software | Version | Installation |
-|----------|---------|--------------|
-| Python 3 | 3.9+ | Pre-installed on macOS |
-| FFmpeg | Latest | `brew install ffmpeg` |
-| ARRI Reference Tool | 1.0.0+ | [Download from ARRI](https://www.arri.com/en/learn-help/learn-help-camera-system/tools/arri-reference-tool) |
-
-### Python Dependencies
-
-```bash
-pip3 install --user watchdog
-```
-
-## Configuration
-
-### config.ini
-
-```ini
-[Paths]
-# Tool paths
-art_cli = /Applications/art-cmd_1.0.0_macos_universal/bin/art-cmd
-ffmpeg = ffmpeg
-
-# Storage paths (QNAP network share)
-watch = /Volumes/QNAP1_RAW_Footage/ingest_engine_v2/watch_folder
-processing = /Volumes/QNAP1_RAW_Footage/ingest_engine_v2/processing_folder
-output = /Volumes/QNAP1_RAW_Footage/ingest_engine_v2/output_folder
-processed = /Volumes/QNAP1_RAW_Footage/ingest_engine_v2/processed_folder
-temp = /Volumes/QNAP1_RAW_Footage/ingest_engine_v2/temp_folder
-error = /Volumes/QNAP1_RAW_Footage/ingest_engine_v2/error_folder
-
-# Local paths
-logs = logs
-status_file = status.json
-history_file = history.json
-
-[Settings]
-art_colorspace = Rec.709/D65/BT.1886
-
-[Processing]
-allowed_extensions = .mov,.mxf
-
-[API]
-host = 0.0.0.0
-port = 8080
-```
-
-## Folder Structure
-
-| Folder | Purpose |
-|--------|---------|
-| `watch` | Drop source files here for processing |
-| `processing` | Files currently being processed (auto-managed) |
-| `output` | Transcoded DNxHD files appear here |
-| `processed` | Source files moved here after successful processing |
-| `temp` | Intermediate files during processing |
-| `error` | Files that failed processing |
-
-## Processing Pipeline
-
-1. **Detection**: Polls watch folder every 15 seconds for new MXF/MOV files
-2. **Stabilization**: Waits for file to finish copying (size stops changing)
-3. **Move to Processing**: Immediately moves file to processing folder
-4. **ARRI Processing**: Applies embedded look using ARRI Reference Tool → ProRes intermediate
-5. **FFmpeg Transcode**: Converts to DNxHD 145Mbps, 1920x1080, PCM audio
-6. **Cleanup**: Removes intermediate file, archives source to processed folder
-
-## API Endpoints
-
-The engine exposes an API on port 8080 for remote monitoring:
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/status` | Current processing status |
-| `GET /api/history` | Processing history (last 100 jobs) |
-| `GET /api/folders/{name}` | List files in watch/processing/output/processed/error |
-| `GET /api/logs` | Recent log entries |
-| `GET /api/health` | Health check |
-
-## Web Dashboard
-
-The dashboard is titled "ARRI35 Footage Dashboard" and includes:
-
-- **Featured Processing Box**: Large status display at top with progress bar
-- **Queue**: Scrollable list of waiting/processing files (handles hundreds of files)
-- **Failed**: Files that encountered errors
-- **Processing History**: Scrollable table of completed jobs
-- **Live Log**: Real-time log viewer
-- **Theme Switcher**: 6 themes (Midnight, Ocean, Forest, Sunset, Light, Rose)
-
-## Troubleshooting
-
-### Engine won't start - "Address already in use"
-```bash
-# Kill process on port 8080
-lsof -ti:8080 | xargs kill -9
-
-# Then start
-~/start_ingest_engine.sh
-```
-
-### Files not being processed (stuck in queue)
-The engine uses permanent deduplication - files seen once won't be processed again until restart:
-```bash
-# Restart to clear deduplication
-~/stop_ingest_engine.sh
-~/start_ingest_engine.sh
-```
-
-### Multiple instances running
-```bash
-# Check for instances
-pgrep -af "python.*main.py"
-
-# Kill all
-pkill -9 -f "python.*main.py"
-
-# Clean up and restart
-rm -f ~/ingest_engine_v2/.ingest_engine.lock
-~/start_ingest_engine.sh
-```
-
-### ARRI processing fails - "Clip container not readable"
-- File may still be copying - engine waits but large files need more time
-- Verify ARRI Reference Tool is installed
-- Check the file has an embedded ARRI look
-
-### FFmpeg fails
-- Verify FFmpeg is installed: `which ffmpeg`
-- Check available disk space in output folder
-- Review FFmpeg warnings in logs
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `main.py` | Main entry point, file detection and queue management |
-| `processor.py` | Video processing pipeline |
-| `api_server.py` | HTTP API for remote monitoring |
-| `config.ini` | Configuration settings |
-| `setup_new_machine.sh` | Setup script for new installations |
-| `status.json` | Current processing status (auto-generated) |
-| `history.json` | Processing history (auto-generated) |
-
-## Web App Deployment (Dev Server)
-
-The web app runs on productiondev.am.com in Docker:
-
-```bash
-# Location on dev server
-~/ingest-engine-web/
-
-# Docker files
-~/ingest-engine-web/docker/
-  - docker-compose.yml
-  - Dockerfile.frontend
-  - Dockerfile.backend
-
-# Rebuild after changes
-cd ~/ingest-engine-web/docker
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
-
-# View logs
-docker logs -f ingest-engine-frontend
-docker logs -f ingest-engine-backend
-```
-
-### Dev Server Ports (PORT_REGISTRY.md)
-
-| Port | Application |
-|------|-------------|
-| 3030 | ingest-engine-web frontend |
-| 3031 | ingest-engine-web backend |
-
-## Migrating to New Mac Studio
-
-1. **On Current Mac**: Copy the ingest_engine_v2 folder
-2. **On New Mac**:
-   - Run `./setup_new_machine.sh`
-   - Install ARRI Reference Tool
-   - Verify QNAP mount path
-   - Update config.ini paths if needed
-3. **On Dev Server**:
-   - Update `INGEST_ENGINE_API` in docker-compose.yml to new Mac's IP
-   - Rebuild: `docker-compose down && docker-compose up -d --build`
-
-## Notes
-
-- Engine processes ONE file at a time (sequential, no parallelism)
-- Polling interval: 15 seconds
-- File stabilization check: waits for file size to stop changing
-- Deduplication: same filename won't process twice per session (restart to clear)
-- Theme preference saved to browser localStorage
+---
