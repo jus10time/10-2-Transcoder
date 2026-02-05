@@ -1,112 +1,119 @@
 # Field Ingest Engine
 
-This application provides a standalone graphical user interface (GUI) to transcode ARRI camera footage (MXF/MOV) into DNxHD files for Avid compatibility. It is designed for easy use in the field on a macOS laptop.
+A native macOS application for transcoding ARRI camera footage (MXF/MOV) into DNxHD files for Avid compatibility. Designed for easy use in the field on external drives.
 
-## First-Time Setup
+## Installation
 
-Before you can run the application, you need to install its dependencies.
+### Prerequisites
 
-### 1. Install FFmpeg & ARRI Reference Tool
+1. **FFmpeg:** Required for video transcoding. Install via [Homebrew](https://brew.sh/):
+   ```bash
+   brew install ffmpeg
+   ```
 
--   **FFmpeg:** This is critical for video transcoding. The easiest way to install it on macOS is with [Homebrew](https://brew.sh/):
-    ```bash
-    brew install ffmpeg
-    ```
--   **ARRI Reference Tool (ART):** The application uses ART to apply color science.
-    1.  Download and install the tool from the [official ARRI website](https://www.arri.com/en/learn-help/learn-help-camera-system/tools/arri-reference-tool).
-    2.  Open `config.ini` and verify that the `art_cli` path points to your installation of the `art-cmd` executable.
+2. **ARRI Reference Tool (ART):** For color science processing.
+   - Download from the [official ARRI website](https://www.arri.com/en/learn-help/learn-help-camera-system/tools/arri-reference-tool)
+   - Note the installation path for `art-cmd`
 
-### 2. Set up Python Environment
+### Install the App
 
-This project uses a virtual environment to manage its Python packages, preventing conflicts with your system.
+1. Copy `Field Ingest Engine.app` from `dist/` to your Applications folder
+2. On first launch, right-click → Open (to bypass Gatekeeper for unsigned apps)
 
-1.  **Create Virtual Environment:** From inside the `field_ingest_app` directory, run this command once:
-    ```bash
-    python3 -m venv venv
-    ```
-2.  **Activate Environment:** Before installing packages or running the app, you must activate the environment:
-    ```bash
-    source venv/bin/activate
-    ```
-3.  **Install Python Packages:** With the environment active, install the required packages:
-    ```bash
-    pip3 install -r requirements.txt
-    ```
+## How to Use
 
-## How to Run
+### 1. Select Source Folder
 
-1.  Navigate to the `field_ingest_app` directory in your terminal.
-2.  Run the launcher script:
-    ```bash
-    ./launch.sh
-    ```
-This script automatically activates the virtual environment and starts the GUI application.
+- Launch the app and click **Browse Folder**
+- Select the folder containing your camera footage (e.g., `B_0001_1DZI` on a camera card)
+- The app will show where output folders will be created (drive root)
 
-## Using the Application
+### 2. Start Processing
 
-### 1. Setup
+- Click **Start Processing**
+- Output folders are created at the drive root:
+  ```
+  /Volumes/YourDrive/
+  ├── 02_OUTPUT/        (Transcoded DNxHD files)
+  ├── 03_ERROR/         (Failed files, if any)
+  └── _internal/        (Logs and status files)
+  ```
+- Source files remain untouched in their original location
 
-When you launch the app, you will see the setup screen.
+### 3. Monitor Progress
 
--   **Select Project Folder:** Click "Browse..." and select a main folder for your project (e.g., on an external drive). The application will automatically create a set of subdirectories inside this folder.
--   **Start Processing:** Click this button to begin.
+- **Status Indicator:** Pulsing green = processing, amber = paused
+- **Progress Bar:** Shows current file progress
+- **Queue Panel:** Files waiting to be processed
+- **Completed Panel:** Processed files with success (✓) or failure (✗)
+- **Log Panel:** Real-time processing log (collapsible)
 
-The application will create the following structure inside your chosen Project Folder. All work happens here, and no media is copied to your local computer.
+### 4. Stop and Generate Report
 
+- Click **Back** or close the app when done
+- A PDF report is generated in `02_OUTPUT/` with all processed files
+
+## Features
+
+- **Native macOS App:** Built with py2app, handles external drive permissions
+- **Dark "Matrix" Theme:** Professional dark UI with green accents
+- **Process in Place:** Source files stay untouched on camera cards
+- **Alphabetical Processing:** Files process in order (C001, C002, C003...)
+- **Pause/Resume:** Safely pause between files for transport
+- **Session-Based Tracking:** Completed list and reports only show current session
+- **Auto PDF Reports:** Report automatically generated when all files complete
+
+## Building from Source
+
+### Setup Development Environment
+
+```bash
+cd field_ingest_app
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
-<Your Project Folder>/
-├── 01_WATCH_FOLDER/     (Drop your raw footage here)
-├── 02_OUTPUT/           (Transcoded DNxHD files appear here)
-├── 03_PROCESSED/        (Source files are moved here after success)
-├── 04_ERROR/            (Source files are moved here on failure)
-└── _internal/           (For logs and status files)
+
+### Run in Development Mode
+
+```bash
+source venv/bin/activate
+python run_gui.py
 ```
 
-### 2. Monitoring
+### Build Native App
 
-After starting, the view will switch to the monitoring dashboard.
+```bash
+source venv/bin/activate
+python setup.py py2app
+```
 
--   **Status Indicator:** A pulsing green dot shows when processing is active, with the current stage displayed (e.g., "FFmpeg Transcoding").
--   **Progress Bar:** A smooth, animated progress bar showing percentage complete.
--   **Queue Panel:** Files waiting to be processed, with file icons.
--   **Completed Panel:** Processed files with success (✓) or failure (✗) indicators and duration.
--   **Collapsible Log:** A detailed, real-time log panel that can be collapsed to save space.
--   **Stats Bar:** Running totals of processed, failed, and queued files.
+The built app will be in `dist/Field Ingest Engine.app`
 
-## GUI Features
+## Configuration
 
-The application uses a modern dark theme interface built with CustomTkinter:
+Edit `config.ini` to customize:
+- `art_cli` - Path to ARRI Reference Tool
+- `ffmpeg_path` - Path to FFmpeg (default: system path)
+- Processing extensions and output settings
 
-- **Dark "Matrix" Theme:** Deep dark background with vibrant green accents, optimized for field use
-- **Rounded Widgets:** Modern card-based layout with rounded corners
-- **Visual Feedback:** Pulsing status indicator, color-coded success/failure states
-- **Responsive Layout:** Window can be resized while maintaining proper proportions
-- **Pause/Resume:** Safely pause processing between files for transport
+## Technical Notes
 
-## Pause Feature
+- Uses FileHelper.app for external drive permissions
+- Lock files stored in `/tmp/` for bundled app compatibility
+- Files sorted alphabetically before queuing
+- Stabilization check ensures files are fully copied before processing
+- 10-second idle cooldown before declaring session complete (prevents false triggers)
 
-Designed for field use where you may need to move locations mid-session:
+## Recent Updates (February 2026)
 
-1. **Click Pause** → Status shows "PAUSING" (amber, pulsing)
-2. **Current file completes** → Status changes to "PAUSED" (amber, static)
-3. **Safe to close laptop** and move to new location
-4. **Click Resume** → Processing continues with remaining queue
-
-The pause feature waits for the current file to finish (art-cli/ffmpeg cannot be interrupted mid-process), then holds the queue until you're ready to continue.
+- **Session-based tracking:** Completed list only shows files from current session
+- **Auto PDF generation:** Report generated automatically when all files finish
+- **Completion cooldown:** 10-second delay prevents premature completion detection
+- **Full FFmpeg path:** Config now uses absolute path for bundled app compatibility
 
 ---
-### For Claude Code Manifest
 
-Please add the following entry to the project manifest:
-
-```json
-{
-  "project_name": "Field Ingest Engine",
-  "version": "2.0.0",
-  "description": "A standalone GUI application for transcoding ARRI footage in the field.",
-  "entry_point": "field_ingest_app/launch.sh",
-  "type": "GUI Application",
-  "tags": ["python", "customtkinter", "video", "transcoding", "arri", "ffmpeg"]
-}
-```
----
+**Version:** 2.1.0
+**Last Updated:** February 2026
+**Platform:** macOS (Apple Silicon and Intel)

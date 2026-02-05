@@ -24,5 +24,13 @@ venv/
 # macOS
 .DS_Store
 
+# Build artifacts
+build/
+dist/
+
+# Helper apps (built separately)
+FileHelper/
+FileHelper.app/
+
 # Claude
 .claude/

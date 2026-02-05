@@ -1,2 +1,5 @@
 watchdog
 customtkinter
+py2app
+reportlab
+Pillow

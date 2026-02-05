@@ -3,10 +3,15 @@ from tkinter import filedialog, messagebox
 import tkinter as tk
 import threading
 import os
+import sys
 import time
 import json
 import atexit
 from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # Drag-and-drop is disabled (tkinterdnd2 has issues on macOS M1)
 DND_AVAILABLE = False
@@ -53,12 +58,17 @@ class FieldIngestApp(ctk.CTk):
         self.last_log_position = 0
         self.current_queue = []
         self.current_history = []
+        self.session_history = []  # Only files from current session
         self.is_processing = False
         self.pulse_state = 0
         self.start_time = None
         self.processed_count = 0
         self.failed_count = 0
         self.queued_count = 0
+        self.was_actively_processing = False  # Track if we ever processed a file
+        self.completion_reported = False  # Prevent duplicate PDF generation
+        self.idle_since = None  # Track when engine went idle (for cooldown)
+        self.completion_cooldown = 10  # Seconds to wait before declaring completion
 
         # Window close handling
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -85,44 +95,168 @@ class FieldIngestApp(ctk.CTk):
         self.setup_frame.pack_forget()
         self.monitor_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
-    def start_ingest(self, folder_path):
+    def start_ingest(self, source_folder, drive_root):
         """Initialize and start the ingest engine."""
-        if not (folder_path and os.path.isdir(folder_path)):
-            messagebox.showerror("Error", "Please select a valid project folder.")
+        if not (source_folder and os.path.isdir(source_folder)):
+            messagebox.showerror("Error", "Please select a valid source folder.")
             return False
 
-        self.project_folder.set(folder_path)
+        if not (drive_root and os.path.isdir(drive_root)):
+            messagebox.showerror("Error", "Could not determine drive root.")
+            return False
 
+        self.project_folder.set(drive_root)
+        self.source_folder = source_folder
+
+        # Source folder is where files are (watch folder points here)
+        # Output folders go at drive root
+        # Note: No 'processed' folder - source files stay in place
         self.paths = {
-            'watch': os.path.join(folder_path, '01_WATCH_FOLDER'),
-            'output': os.path.join(folder_path, '02_OUTPUT'),
-            'processed': os.path.join(folder_path, '03_PROCESSED'),
-            'error': os.path.join(folder_path, '04_ERROR'),
-            'processing': os.path.join(folder_path, '_internal', 'processing'),
-            'temp': os.path.join(folder_path, '_internal', 'temp'),
-            'logs': os.path.join(folder_path, '_internal', 'logs'),
-            'status_file': os.path.join(folder_path, '_internal', 'status.json'),
-            'queue_file': os.path.join(folder_path, '_internal', 'queue.json'),
-            'history_file': os.path.join(folder_path, '_internal', 'history.json'),
-            'pause_file': os.path.join(folder_path, '_internal', 'pause_control.json'),
+            'watch': source_folder,  # Process files directly from source
+            'output': os.path.join(drive_root, '02_OUTPUT'),
+            'processed': os.path.join(drive_root, '_internal', 'processed'),  # Placeholder, not used
+            'error': os.path.join(drive_root, '03_ERROR'),
+            'processing': os.path.join(drive_root, '_internal', 'processing'),
+            'temp': os.path.join(drive_root, '_internal', 'temp'),
+            'logs': os.path.join(drive_root, '_internal', 'logs'),
+            'status_file': os.path.join(drive_root, '_internal', 'status.json'),
+            'queue_file': os.path.join(drive_root, '_internal', 'queue.json'),
+            'history_file': os.path.join(drive_root, '_internal', 'history.json'),
+            'pause_file': os.path.join(drive_root, '_internal', 'pause_control.json'),
         }
 
         try:
+            # Create output folders at drive root (skip 'watch' - that's the source folder)
             for key, path in self.paths.items():
+                if key == 'watch':
+                    continue  # Source folder already exists, don't try to create it
                 folder = os.path.dirname(path) if '.' in os.path.basename(path) else path
-                os.makedirs(folder, exist_ok=True)
+                self._create_directory(folder)
             # Clear log file
             if os.path.exists(self.paths['logs']):
                 open(os.path.join(self.paths['logs'], 'ingest_engine.log'), 'w').close()
             self.last_log_position = 0
+        except PermissionError as e:
+            messagebox.showerror(
+                "Permission Denied",
+                f"Cannot create directories at:\n{drive_root}\n\n"
+                f"Error: {e}\n\n"
+                "Try one of these solutions:\n\n"
+                "Option 1 - Grant Full Disk Access (recommended):\n"
+                "1. Open System Settings → Privacy & Security → Full Disk Access\n"
+                "2. Click + and add BOTH:\n"
+                "   - Field Ingest Engine.app (in dist folder)\n"
+                "   - FileHelper.app (in Resources folder inside the app)\n"
+                "3. Restart both apps\n\n"
+                "Option 2 - Enable 'Ignore ownership' on the drive:\n"
+                "1. Select the drive in Finder\n"
+                "2. Press Cmd+I (Get Info)\n"
+                "3. Check 'Ignore ownership on this volume'"
+            )
+            return False
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create directory structure: {e}")
             return False
 
-        # Reset counters
+        # Directories created successfully, now start processing
+        return self.do_start_processing()
+
+    def _get_file_helper_app_path(self):
+        """Get path to the FileHelper.app bundle."""
+        # Try multiple locations to find the helper app
+
+        # Location 1: In app bundle Resources (py2app)
+        try:
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+            bundle_resources = os.path.join(os.path.dirname(exe_dir), 'Resources', 'FileHelper.app')
+            if os.path.exists(bundle_resources):
+                return bundle_resources
+        except Exception:
+            pass
+
+        # Location 2: Next to __file__ in Resources
+        try:
+            file_dir = os.path.dirname(os.path.abspath(__file__))
+            nearby_helper = os.path.join(file_dir, 'FileHelper.app')
+            if os.path.exists(nearby_helper):
+                return nearby_helper
+        except Exception:
+            pass
+
+        # Location 3: Development mode - same directory as script
+        try:
+            dev_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'FileHelper.app')
+            if os.path.exists(dev_path):
+                return dev_path
+        except Exception:
+            pass
+
+        return None
+
+    def _create_directory(self, path):
+        """Create directory, trying multiple methods for external drive compatibility."""
+        if os.path.exists(path):
+            return
+
+        import subprocess
+
+        # Method 1: Use native Swift FileHelper.app via 'open' (gets independent permissions)
+        helper_app = self._get_file_helper_app_path()
+        if helper_app:
+            # Try multiple times - first attempt may trigger permission dialog,
+            # subsequent attempts work after permission is granted
+            for attempt in range(3):
+                try:
+                    # Use 'open -W' to launch as independent app and wait for completion
+                    # This gives the helper its own permission context
+                    result = subprocess.run(
+                        ['open', '-W', helper_app, '--args', 'mkdir', path],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    # Check if directory was created (open always returns 0)
+                    if os.path.exists(path):
+                        return
+                    # Small delay before retry
+                    if attempt < 2:
+                        time.sleep(0.5)
+                except Exception as e:
+                    print(f"FileHelper.app attempt {attempt+1} exception: {e}")
+
+        # Method 2: Normal os.makedirs (fallback)
+        try:
+            os.makedirs(path, exist_ok=True)
+            return
+        except PermissionError:
+            pass
+
+        # Method 3: subprocess mkdir -p
+        try:
+            result = subprocess.run(
+                ['mkdir', '-p', path],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and os.path.exists(path):
+                return
+        except Exception:
+            pass
+
+        # If all else fails, raise the original error
+        os.makedirs(path, exist_ok=True)  # This will raise PermissionError
+
+    def do_start_processing(self):
+        """Actually start the processing after directories are created."""
+        # Reset counters and flags for new session
         self.processed_count = 0
         self.failed_count = 0
         self.queued_count = 0
+        self.was_actively_processing = False
+        self.completion_reported = False
+        self.idle_since = None
+        self.current_history = []
+        self.session_history = []
         self.start_time = datetime.now()
         self.is_processing = True
 
@@ -140,11 +274,83 @@ class FieldIngestApp(ctk.CTk):
 
         return True
 
+    def generate_pdf_report(self):
+        """Generate a PDF report of files processed in the current session."""
+        # Use session history (only files from this session)
+        history = self.session_history if hasattr(self, 'session_history') else []
+
+        if not history:
+            return None
+
+        # Create PDF in output folder
+        output_folder = self.paths.get('output', '')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = os.path.join(output_folder, f"Transcode_Report_{timestamp}.pdf")
+
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        # Title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            textColor=colors.darkgreen,
+            spaceAfter=20
+        )
+        elements.append(Paragraph("Field Ingest Engine - Transcode Report", title_style))
+        elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        if self.start_time:
+            elements.append(Paragraph(f"Session started: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        elements.append(Spacer(1, 20))
+
+        # Summary
+        succeeded = sum(1 for item in history if item.get('status', '').upper() == 'SUCCEEDED')
+        failed = sum(1 for item in history if item.get('status', '').upper() == 'FAILED')
+        elements.append(Paragraph(f"Total Files: {len(history)} | Succeeded: {succeeded} | Failed: {failed}", styles['Normal']))
+        elements.append(Spacer(1, 20))
+
+        # Table of files
+        table_data = [['File', 'Status', 'Duration']]
+        for item in history:
+            filename = os.path.basename(item.get('file', 'Unknown'))
+            status = item.get('status', 'Unknown').upper()
+            try:
+                start = datetime.fromisoformat(item.get('start_time', ''))
+                end = datetime.fromisoformat(item.get('end_time', ''))
+                duration = str(end - start).split('.')[0]
+            except (ValueError, TypeError):
+                duration = "—"
+            table_data.append([filename[:40], status, duration])
+
+        table = Table(table_data, colWidths=[300, 80, 80])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ]))
+        elements.append(table)
+
+        doc.build(elements)
+        return pdf_path
+
     def on_closing(self):
         """Handle window close event."""
         if self.is_processing:
             if not messagebox.askokcancel("Quit", "Processing is active. Stop and exit?"):
                 return
+            # Generate report before closing (only if not already generated)
+            if not self.completion_reported:
+                pdf_path = self.generate_pdf_report()
+                if pdf_path:
+                    messagebox.showinfo("Report Generated", f"Transcode report saved to:\n{pdf_path}")
         self.is_processing = False
         self.destroy()
 
@@ -182,6 +388,15 @@ class SetupFrame(ctk.CTkFrame):
         )
         subtitle_label.pack(pady=(5, 0))
 
+        # Detected output location
+        self.output_info = ctk.CTkLabel(
+            header_frame,
+            text="",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["text_dim"]
+        )
+        self.output_info.pack(pady=(10, 0))
+
         # Main card with drop zone
         self.drop_card = ctk.CTkFrame(
             self,
@@ -205,7 +420,7 @@ class SetupFrame(ctk.CTkFrame):
 
         self.drop_label = ctk.CTkLabel(
             drop_content,
-            text="Select or drag a project folder\nto begin processing",
+            text="Select the folder containing\nfiles to transcode",
             font=ctk.CTkFont(size=16),
             text_color=COLORS["text"],
             justify="center"
@@ -227,15 +442,33 @@ class SetupFrame(ctk.CTkFrame):
         )
         self.browse_btn.pack(pady=(0, 15))
 
-        # Selected path display
+        # Selected path display with clear button
+        path_row = ctk.CTkFrame(drop_content, fg_color="transparent")
+        path_row.pack(fill="x", pady=(0, 10))
+
         self.path_label = ctk.CTkLabel(
-            drop_content,
+            path_row,
             text="No folder selected",
             font=ctk.CTkFont(size=12),
             text_color=COLORS["text_dim"],
-            wraplength=500
+            wraplength=450
         )
-        self.path_label.pack(pady=(0, 10))
+        self.path_label.pack(side="left", expand=True)
+
+        self.clear_btn = ctk.CTkButton(
+            path_row,
+            text="✕",
+            font=ctk.CTkFont(size=14),
+            fg_color=COLORS["bg_input"],
+            hover_color=COLORS["error"],
+            text_color=COLORS["text_dim"],
+            width=30,
+            height=30,
+            corner_radius=5,
+            command=self.clear_selection
+        )
+        # Initially hidden
+        self.clear_btn.pack_forget()
 
         # Enable drag-and-drop if available
         if DND_AVAILABLE:
@@ -248,20 +481,18 @@ class SetupFrame(ctk.CTkFrame):
         preview_frame = ctk.CTkFrame(self, fg_color="transparent")
         preview_frame.pack(fill="x", padx=40, pady=(25, 15))
 
-        preview_title = ctk.CTkLabel(
+        self.preview_title = ctk.CTkLabel(
             preview_frame,
-            text="This will create:",
+            text="Output folders will be created at drive root:",
             font=ctk.CTkFont(size=13),
             text_color=COLORS["text_dim"],
             anchor="w"
         )
-        preview_title.pack(fill="x")
+        self.preview_title.pack(fill="x")
 
         folders_info = [
-            ("📂 01_WATCH_FOLDER", "Drop ARRI footage here"),
             ("📂 02_OUTPUT", "DNxHD transcodes"),
-            ("📂 03_PROCESSED", "Original files after processing"),
-            ("📂 04_ERROR", "Failed files"),
+            ("📂 03_ERROR", "Failed files (if any)"),
         ]
 
         for folder_name, description in folders_info:
@@ -309,18 +540,60 @@ class SetupFrame(ctk.CTkFrame):
         if folder:
             self.set_selected_folder(folder)
 
+    def _get_drive_root(self, path):
+        """Get the drive/volume root from a path."""
+        # For paths like /Volumes/531H/B_0001_1DZI, return /Volumes/531H
+        if path.startswith('/Volumes/'):
+            parts = path.split('/')
+            if len(parts) >= 3:
+                return '/'.join(parts[:3])  # /Volumes/DriveName
+        # For other paths, go up to find a mount point or use parent
+        current = path
+        while current and current != '/':
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            # Check if we're at a volume boundary
+            if os.path.ismount(current):
+                return current
+            current = parent
+        return os.path.dirname(path)  # Fallback to parent directory
+
     def set_selected_folder(self, folder_path):
         """Update the selected folder and enable start button."""
         self.selected_folder = folder_path
+        self.drive_root = self._get_drive_root(folder_path)
+
         # Truncate path for display if needed
         display_path = folder_path
         if len(display_path) > 60:
             display_path = "..." + display_path[-57:]
         self.path_label.configure(
-            text=f"Selected: {display_path}",
+            text=f"Source: {display_path}",
             text_color=COLORS["accent"]
         )
+
+        # Show where output will go
+        self.output_info.configure(
+            text=f"Output folders will be created at: {self.drive_root}",
+            text_color=COLORS["success"]
+        )
+
         self.start_btn.configure(state="normal")
+        # Show clear button
+        self.clear_btn.pack(side="right", padx=(10, 0))
+
+    def clear_selection(self):
+        """Clear the selected folder."""
+        self.selected_folder = None
+        self.drive_root = None
+        self.path_label.configure(
+            text="No folder selected",
+            text_color=COLORS["text_dim"]
+        )
+        self.output_info.configure(text="")
+        self.start_btn.configure(state="disabled")
+        self.clear_btn.pack_forget()
 
     def on_drop(self, event):
         """Handle file/folder drop."""
@@ -352,8 +625,8 @@ class SetupFrame(ctk.CTkFrame):
 
     def start_processing(self):
         """Start the ingest engine."""
-        if self.selected_folder:
-            self.app.start_ingest(self.selected_folder)
+        if self.selected_folder and self.drive_root:
+            self.app.start_ingest(self.selected_folder, self.drive_root)
 
 
 class MonitorFrame(ctk.CTkFrame):
@@ -700,6 +973,10 @@ class MonitorFrame(ctk.CTkFrame):
         if self.app.is_processing:
             if not messagebox.askokcancel("Stop Processing", "Stop processing and return to setup?"):
                 return
+            # Generate report before stopping
+            pdf_path = self.app.generate_pdf_report()
+            if pdf_path:
+                messagebox.showinfo("Report Generated", f"Transcode report saved to:\n{pdf_path}")
             self.app.is_processing = False
         self.app.show_setup_frame()
 
@@ -766,6 +1043,8 @@ class MonitorFrame(ctk.CTkFrame):
             )
         else:
             # Actively processing
+            self.app.was_actively_processing = True
+            self.app.idle_since = None  # Reset idle timer when actively processing
             self.pulse_state = (self.pulse_state + 1) % 2
             color = COLORS["accent"] if self.pulse_state else COLORS["accent_dim"]
             self.status_indicator.configure(text_color=color)
@@ -777,6 +1056,12 @@ class MonitorFrame(ctk.CTkFrame):
                 hover_color="#ffcc44"
             )
 
+        # Track when idle started (for completion cooldown)
+        if is_idle and self.app.idle_since is None:
+            self.app.idle_since = datetime.now()
+        elif not is_idle:
+            self.app.idle_since = None
+
         # Update file and stage
         self.file_label.configure(text=f"File: {current_file}")
         self.stage_label.configure(text=f"Stage: {current_stage}")
@@ -785,7 +1070,7 @@ class MonitorFrame(ctk.CTkFrame):
         self.progress_bar.set(progress / 100)
         self.progress_percent.configure(text=f"{int(progress)}%")
 
-        # Update lists
+        # Update lists (must happen before completion check to get current counts)
         self.update_queue_list()
         self.update_history_list()
 
@@ -796,6 +1081,36 @@ class MonitorFrame(ctk.CTkFrame):
         self.stats_label.configure(
             text=f"Stats: {self.app.processed_count} processed | {self.app.failed_count} failed | {self.app.queued_count} queued"
         )
+
+        # Check for processing completion (was processing, now idle, queue empty)
+        # This must happen AFTER update_queue_list and update_history_list so counts are current
+        # Use cooldown to avoid false completion when briefly idle between files
+        idle_long_enough = (
+            self.app.idle_since is not None and
+            (datetime.now() - self.app.idle_since).total_seconds() >= self.app.completion_cooldown
+        )
+
+        if (is_idle and
+            idle_long_enough and
+            self.app.was_actively_processing and
+            self.app.queued_count == 0 and
+            (self.app.processed_count > 0 or self.app.failed_count > 0) and
+            not self.app.completion_reported):
+
+            self.app.completion_reported = True
+            self.status_text.configure(text="COMPLETE", text_color=COLORS["success"])
+
+            # Generate PDF report
+            pdf_path = self.app.generate_pdf_report()
+            if pdf_path:
+                from tkinter import messagebox
+                messagebox.showinfo(
+                    "Processing Complete",
+                    f"All files processed!\n\n"
+                    f"Processed: {self.app.processed_count}\n"
+                    f"Failed: {self.app.failed_count}\n\n"
+                    f"Report saved to:\n{pdf_path}"
+                )
 
         # Schedule next update
         self.after(500, self.update_monitor)
@@ -836,21 +1151,35 @@ class MonitorFrame(ctk.CTkFrame):
             pass
 
     def update_history_list(self):
-        """Update the history list display."""
+        """Update the history list display (current session only)."""
         history_file = self.app.paths.get('history_file', '')
         if not history_file or not os.path.exists(history_file):
             return
 
         try:
             with open(history_file, 'r') as f:
-                data = json.load(f)
+                all_data = json.load(f)
 
-            if data != self.app.current_history:
-                self.app.current_history = data.copy()
+            # Filter to only current session (items processed after session start)
+            session_data = []
+            if self.app.start_time:
+                for item in all_data:
+                    try:
+                        item_start = datetime.fromisoformat(item.get('start_time', ''))
+                        if item_start >= self.app.start_time:
+                            session_data.append(item)
+                    except (ValueError, TypeError):
+                        pass
 
-                # Count successes and failures
-                succeeded = sum(1 for item in data if item.get('status', '').upper() == 'SUCCEEDED')
-                failed = sum(1 for item in data if item.get('status', '').upper() == 'FAILED')
+            # Store session-only data for PDF generation
+            self.app.session_history = session_data
+
+            if session_data != self.app.current_history:
+                self.app.current_history = session_data.copy()
+
+                # Count successes and failures (session only)
+                succeeded = sum(1 for item in session_data if item.get('status', '').upper() == 'SUCCEEDED')
+                failed = sum(1 for item in session_data if item.get('status', '').upper() == 'FAILED')
                 self.app.processed_count = succeeded
                 self.app.failed_count = failed
 
@@ -859,7 +1188,7 @@ class MonitorFrame(ctk.CTkFrame):
                     widget.destroy()
 
                 # Add new items (most recent first)
-                for item in reversed(data[-50:]):  # Show last 50
+                for item in reversed(session_data[-50:]):  # Show last 50
                     status = item.get('status', 'UNKNOWN').upper()
                     filename = os.path.basename(item.get('file', ''))
 
@@ -912,7 +1241,7 @@ class MonitorFrame(ctk.CTkFrame):
                     time_label.pack(side="right")
 
                 # Update header
-                self.history_header.configure(text=f"COMPLETED ({len(data)})")
+                self.history_header.configure(text=f"COMPLETED ({len(session_data)})")
         except (FileNotFoundError, json.JSONDecodeError):
             pass
 

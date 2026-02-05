@@ -156,8 +156,10 @@ def process_clip(source_path: str, config: ConfigParser):
         # --- 2. Get video duration for progress calculation ---
         logging.info("Step 2: Analyzing intermediate file...")
         update_status(status_path, {"status": "processing", "file": filename, "progress": 0, "stage": "Analyzing"})
+        # Derive ffprobe path from ffmpeg path (same directory)
+        ffprobe_path = ffmpeg_path.replace('ffmpeg', 'ffprobe')
         ffprobe_cmd = [
-            "ffprobe",
+            ffprobe_path,
             "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -222,12 +224,9 @@ def process_clip(source_path: str, config: ConfigParser):
             os.remove(intermediate_path)
             logging.info(f"Removed intermediate file: {intermediate_path}")
 
-        # --- 5. Move Processed Source File ---
-        logging.info("Step 5: Archiving source file...")
-        update_status(status_path, {"status": "processing", "file": filename, "progress": 100, "stage": "Archiving"})
-        processed_dest = os.path.join(processed_folder, filename)
-        shutil.move(source_path, processed_dest)
-        logging.info(f"Moved source file to: {processed_dest}")
+        # --- 5. Complete (source file stays in place) ---
+        logging.info("Step 5: Processing complete (source file unchanged)")
+        update_status(status_path, {"status": "processing", "file": filename, "progress": 100, "stage": "Complete"})
 
         logging.info(f"--- Successfully processed {filename}. Final file at: {final_avid_path} ---")
         processing_status = "succeeded" # Set success status

@@ -16,7 +16,10 @@ from watchdog.events import FileSystemEventHandler
 from processor import process_clip, update_status
 from api_server import start_api_server
 
-LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.ingest_engine.lock')
+# Use temp directory for lock files (works in bundled apps)
+import tempfile
+_temp_dir = tempfile.gettempdir()
+LOCK_FILE = os.path.join(_temp_dir, '.field_ingest_engine.lock')
 _lock_file_handle = None
 
 # Global queue for files to be processed
@@ -61,12 +64,12 @@ def set_pause_state(paused=None, pause_requested=None):
             logging.error(f"Failed to write pause state: {e}")
 
 
-def wait_for_file_to_stabilize(file_path: str, delay: int = 5):
+def wait_for_file_to_stabilize(file_path: str, delay: int = 2):
     """Waits for the file to stop changing size."""
     logging.info(f"Waiting for {os.path.basename(file_path)} to stabilize...")
     last_size = -1
     attempt = 0
-    max_attempts = 12
+    max_attempts = 5  # Reduced - camera card files are already complete
     while attempt < max_attempts:
         try:
             current_size = os.path.getsize(file_path)
@@ -86,7 +89,7 @@ def wait_for_file_to_stabilize(file_path: str, delay: int = 5):
     logging.warning(f"File {file_path} did not stabilize after {max_attempts * delay} seconds.")
     return False
 
-WORKER_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.worker.lock')
+WORKER_LOCK_FILE = os.path.join(_temp_dir, '.field_ingest_worker.lock')
 
 def worker(q: queue.Queue, config: ConfigParser):
     """Worker thread function to process files from the queue."""
@@ -123,23 +126,14 @@ def worker(q: queue.Queue, config: ConfigParser):
             continue
 
         logging.info(f"Worker processing file from queue: {file_path}")
-        time.sleep(10)  # Initial delay
 
         if not wait_for_file_to_stabilize(file_path):
             logging.warning(f"Skipping {file_path}: Not stabilized or disappeared.")
         elif not os.path.exists(file_path):
             logging.warning(f"Skipping {file_path}: Disappeared after stabilization.")
         else:
-            # Move to processing folder
-            if processing_folder and os.path.isdir(processing_folder):
-                try:
-                    new_path = os.path.join(processing_folder, filename)
-                    shutil.move(file_path, new_path)
-                    file_path = new_path
-                    logging.info(f"Moved to processing folder: {new_path}")
-                except Exception as e:
-                    logging.error(f"Failed to move to processing folder: {e}")
-
+            # Process file in place (don't move from source - it may be read-only)
+            logging.info(f"Starting transcode of: {filename}")
             try:
                 process_clip(file_path, config)
             except Exception as e:
@@ -195,7 +189,8 @@ def scan_watch_folder(handler: IngestEventHandler, watch_path: str):
     try:
         current_files = set(os.listdir(watch_path))
         new_files = current_files - handler.last_seen_files
-        for file_name in new_files:
+        # Sort alphabetically so clips process in order (C001, C002, C003...)
+        for file_name in sorted(new_files):
             full_path = os.path.join(watch_path, file_name)
             if os.path.isfile(full_path):
                 _, ext = os.path.splitext(file_name)
