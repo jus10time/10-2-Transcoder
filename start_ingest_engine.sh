@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Start Ingest Engine v2
+# Start Transcoder v2
 # The web dashboard runs on productiondev.am.com:3030 (Docker)
 #
 
@@ -20,7 +20,7 @@ if lsof -ti:8080 > /dev/null 2>&1; then
     sleep 1
 fi
 
-echo "Starting Ingest Engine..."
+echo "Starting Transcoder..."
 cd "/Users/admin/ingest_engine_v2" || exit
 
 # Clean up any stale lock files
@@ -33,12 +33,12 @@ mkdir -p logs
 # Start the engine
 nohup python3 main.py >> logs/ingest_engine.log 2>&1 &
 INGEST_PID=$!
-echo "Ingest Engine PID: $INGEST_PID"
+echo "Transcoder PID: $INGEST_PID"
 
 # Wait and verify it started successfully
 sleep 2
 if ! ps -p $INGEST_PID > /dev/null 2>&1; then
-    echo "ERROR: Ingest Engine failed to start!"
+    echo "ERROR: Transcoder failed to start!"
     echo "Last 20 lines of log:"
     tail -20 logs/ingest_engine.log
     exit 1
@@ -47,7 +47,7 @@ fi
 # Verify API is responding
 sleep 1
 if curl -s http://localhost:8080/api/health | grep -q "ok"; then
-    echo "Ingest Engine started successfully."
+    echo "Transcoder started successfully."
     echo ""
     echo "API: http://localhost:8080"
     echo "Dashboard: http://productiondev.am.com:3030"

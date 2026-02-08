@@ -1,5 +1,5 @@
 """
-py2app setup script for Field Ingest Engine
+py2app setup script for 10-2 Transcoder
 
 To build the app:
     python setup.py py2app
@@ -19,7 +19,7 @@ import customtkinter
 customtkinter_path = os.path.dirname(customtkinter.__file__)
 
 APP = ['run_gui.py']
-APP_NAME = 'Field Ingest Engine'
+APP_NAME = '10-2 Transcoder'
 
 DATA_FILES = [
     # Include config.ini in the app bundle
@@ -28,19 +28,19 @@ DATA_FILES = [
 
 OPTIONS = {
     'argv_emulation': False,  # Not needed for GUI apps, can cause issues
-    'iconfile': None,  # Add path to .icns file if you have one
+    'iconfile': 'icon.icns',
     'plist': {
         'CFBundleName': APP_NAME,
         'CFBundleDisplayName': APP_NAME,
-        'CFBundleIdentifier': 'com.fieldtools.ingestengine',
+        'CFBundleIdentifier': 'com.ten2.transcoder',
         'CFBundleVersion': '1.0.0',
         'CFBundleShortVersionString': '1.0.0',
         'NSHighResolutionCapable': True,
         'NSRequiresAquaSystemAppearance': False,  # Support dark mode
         # Request full disk access for external drives
-        'NSAppleEventsUsageDescription': 'Field Ingest Engine needs to access files for transcoding.',
-        'NSDocumentsFolderUsageDescription': 'Field Ingest Engine needs access to process video files.',
-        'NSRemovableVolumesUsageDescription': 'Field Ingest Engine needs access to external drives for footage offloading.',
+        'NSAppleEventsUsageDescription': '10-2 Transcoder needs to access files for transcoding.',
+        'NSDocumentsFolderUsageDescription': '10-2 Transcoder needs access to process video files.',
+        'NSRemovableVolumesUsageDescription': '10-2 Transcoder needs access to external drives for footage offloading.',
     },
     'packages': [
         'customtkinter',
@@ -88,5 +88,5 @@ setup(
     app=APP,
     data_files=DATA_FILES,
     options={'py2app': OPTIONS},
-    setup_requires=['py2app'],
+    setup_requires=[],
 )

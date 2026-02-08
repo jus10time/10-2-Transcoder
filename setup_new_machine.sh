@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Ingest Engine v2 - New Machine Setup Script
+# Transcoder v2 - New Machine Setup Script
 #
 # This script sets up the ingest engine on a new Mac.
 # Run this after copying the ingest_engine_v2 folder to the new machine.
@@ -11,7 +11,7 @@
 set -e
 
 echo "=============================================="
-echo "  Ingest Engine v2 - New Machine Setup"
+echo "  Transcoder v2 - New Machine Setup"
 echo "=============================================="
 echo ""
 
@@ -190,7 +190,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_DIR="$SCRIPT_DIR/ingest_engine_v2"
 
-echo "Starting Ingest Engine..."
+echo "Starting Transcoder..."
 cd "$ENGINE_DIR" || exit
 
 # Clean up any stale lock file
@@ -200,17 +200,17 @@ rm -f .ingest_engine.lock
 touch logs/ingest_engine.log
 nohup python3 main.py >> logs/ingest_engine.log 2>&1 &
 INGEST_PID=$!
-echo "Ingest Engine PID: $INGEST_PID"
+echo "Transcoder PID: $INGEST_PID"
 
 # Wait a moment and verify it started successfully
 sleep 2
 if ! ps -p $INGEST_PID > /dev/null 2>&1; then
-    echo "ERROR: Ingest Engine failed to start! Check logs/ingest_engine.log"
+    echo "ERROR: Transcoder failed to start! Check logs/ingest_engine.log"
     tail -20 logs/ingest_engine.log
     exit 1
 fi
 
-echo "Ingest Engine started successfully."
+echo "Transcoder started successfully."
 echo "Dashboard: Check your configured web app URL"
 echo "Logs: tail -f $ENGINE_DIR/logs/ingest_engine.log"
 STARTEOF
@@ -225,7 +225,7 @@ cat > "$ADMIN_HOME/stop_ingest_engine.sh" << 'STOPEOF'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_DIR="$SCRIPT_DIR/ingest_engine_v2"
 
-echo "Stopping Ingest Engine..."
+echo "Stopping Transcoder..."
 
 # First try graceful shutdown
 pkill -f "python.*main.py"
@@ -240,7 +240,7 @@ if [ "$REMAINING" -gt 0 ]; then
     echo "WARNING: $REMAINING ingest engine process(es) still running!"
     pgrep -af "python.*main.py"
 else
-    echo "Ingest Engine stopped."
+    echo "Transcoder stopped."
 fi
 
 # Clean up lock file and temp files

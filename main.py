@@ -170,17 +170,24 @@ class IngestEventHandler(FileSystemEventHandler):
         self.config = config
         self.file_queue = file_queue
         self.processing_extensions = config.get('Processing', 'allowed_extensions').split(',')
+        self.skip_extensions = config.get('Processing', 'skip_extensions', fallback='').split(',')
         self.last_seen_files = set()
 
     def on_created(self, event):
         if not event.is_directory:
             _, ext = os.path.splitext(event.src_path)
+            if ext.lower() in self.skip_extensions:
+                logging.warning(f"Skipping unsupported image sequence file: {event.src_path}")
+                return
             if ext.lower() in self.processing_extensions:
                 enqueue_file(event.src_path, self.file_queue, "watchdog")
 
     def on_moved(self, event):
         if not event.is_directory:
             _, ext = os.path.splitext(event.dest_path)
+            if ext.lower() in self.skip_extensions:
+                logging.warning(f"Skipping unsupported image sequence file: {event.dest_path}")
+                return
             if ext.lower() in self.processing_extensions:
                 enqueue_file(event.dest_path, self.file_queue, "watchdog")
 
@@ -194,6 +201,9 @@ def scan_watch_folder(handler: IngestEventHandler, watch_path: str):
             full_path = os.path.join(watch_path, file_name)
             if os.path.isfile(full_path):
                 _, ext = os.path.splitext(file_name)
+                if ext.lower() in handler.skip_extensions:
+                    logging.warning(f"Skipping unsupported image sequence file: {full_path}")
+                    continue
                 if ext.lower() in handler.processing_extensions:
                     enqueue_file(full_path, handler.file_queue, "polling")
         handler.last_seen_files = current_files
@@ -255,7 +265,7 @@ def start_engine(config: ConfigParser):
         ],
         force=True
     )
-    logging.info("--- Starting Ingest Engine ---")
+    logging.info("--- Starting Transcoder ---")
 
     # --- Start API Server ---
     api_port = int(config.get('API', 'port', fallback='8081'))
@@ -301,6 +311,45 @@ def start_engine(config: ConfigParser):
     worker_thread = threading.Thread(target=worker, args=(processing_queue, config), daemon=True)
     worker_thread.start()
 
+    # --- Manual file list mode (from GUI) ---
+    file_list_raw = os.environ.get("TEN2_FILE_LIST", "")
+    if file_list_raw:
+        try:
+            file_list = json.loads(file_list_raw)
+        except Exception:
+            file_list = []
+        if isinstance(file_list, list) and file_list:
+            logging.info(f"Processing {len(file_list)} selected file(s).")
+            for file_path in file_list:
+                if os.path.isfile(file_path):
+                    enqueue_file(file_path, processing_queue, "manual")
+                else:
+                    logging.warning(f"Selected file not found: {file_path}")
+
+            while not processing_queue.empty():
+                try:
+                    queue_snapshot = list(processing_queue.queue)
+                    with open(queue_file_path, 'w') as f:
+                        json.dump(queue_snapshot, f)
+                except Exception as e:
+                    logging.error(f"Failed to write queue status file: {e}")
+                time.sleep(1)
+
+            processing_queue.join()
+            try:
+                with open(queue_file_path, 'w') as f:
+                    json.dump([], f)
+            except Exception as e:
+                logging.error(f"Failed to clear queue status file: {e}")
+            try:
+                with queued_files_lock:
+                    queued_files.clear()
+            except Exception as e:
+                logging.error(f"Failed to clear queued files set: {e}")
+            update_status(status_path, {"status": "idle", "file": "None", "progress": 0, "stage": "Idle"})
+            logging.info("--- Manual file list complete ---")
+            return
+
     event_handler = IngestEventHandler(config, processing_queue)
     logging.info(f"Monitoring folder: {watch_path} (polling every 5 seconds)")
 
@@ -318,7 +367,7 @@ def start_engine(config: ConfigParser):
 
             time.sleep(5)  # Poll every 5 seconds
     except KeyboardInterrupt:
-        logging.info("--- Stopping Ingest Engine ---")
+        logging.info("--- Stopping Transcoder ---")
     finally:
         processing_queue.put(None) # Signal worker to stop
         processing_queue.join()
@@ -332,7 +381,7 @@ def main(path_overrides=None):
     # acquire_lock()
 
     # CLI arguments can still be used if the app is not run from the GUI
-    parser = argparse.ArgumentParser(description="Field Ingest Engine.")
+    parser = argparse.ArgumentParser(description="10-2 Transcoder.")
     parser.add_argument("--watch", help="Override the watch folder path.")
     parser.add_argument("--output", help="Override the output folder path.")
     args = parser.parse_args()

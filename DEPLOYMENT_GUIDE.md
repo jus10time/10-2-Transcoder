@@ -1,4 +1,4 @@
-# Ingest Engine v2 - Deployment Guide
+# Transcoder v2 - Deployment Guide
 
 **Last Updated**: January 2026
 **Current Mac Studio IP**: 192.168.99.171
@@ -22,7 +22,7 @@ This system processes ARRI camera footage through an automated pipeline:
 
 | Item | Path |
 |------|------|
-| Ingest Engine | `~/ingest_engine_v2/` |
+| Transcoder | `~/ingest_engine_v2/` |
 | Start Script | `~/start_ingest_engine.sh` |
 | Stop Script | `~/stop_ingest_engine.sh` |
 | Logs | `~/ingest_engine_v2/logs/ingest_engine.log` |

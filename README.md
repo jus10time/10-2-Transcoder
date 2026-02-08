@@ -1,6 +1,19 @@
-# Field Ingest Engine
+# 10-2 Transcoder
 
-A native macOS application for transcoding ARRI camera footage (MXF/MOV) into DNxHD files for Avid compatibility. Designed for easy use in the field on external drives.
+A native macOS application for transcoding mixed camera footage into DNxHD files for Avid compatibility. Designed for easy use in the field on external drives.
+
+Supported camera families (current):
+- ARRI Alexa 35 (ART CLI embedded look)
+- ARRI Alexa Mini / Amira / Alexa (ART CLI if available, otherwise LUT)
+- Sony FX6 / FX3 (LUT)
+- DJI video files (LUT)
+Note: DJI DNG image sequences are skipped for now.
+
+Output formats (current presets):
+- DNxHD (MXF)
+- ProRes 422 (MOV)
+- H.264 1080p (MP4)
+- H.265 1080p (MP4)
 
 ## Installation
 
@@ -17,7 +30,7 @@ A native macOS application for transcoding ARRI camera footage (MXF/MOV) into DN
 
 ### Install the App
 
-1. Copy `Field Ingest Engine.app` from `dist/` to your Applications folder
+1. Copy `10-2 Transcoder.app` from `dist/` to your Applications folder
 2. On first launch, right-click → Open (to bypass Gatekeeper for unsigned apps)
 
 ## How to Use
@@ -31,6 +44,8 @@ A native macOS application for transcoding ARRI camera footage (MXF/MOV) into DN
 ### 2. Start Processing
 
 - Click **Start Processing**
+- If LUTs are required for any detected camera, you will be prompted once to select a `.cube` LUT.
+- LUTs are stored and reused automatically in `~/.10-2-transcoder/luts/`.
 - Output folders are created at the drive root:
   ```
   /Volumes/YourDrive/
@@ -58,6 +73,7 @@ A native macOS application for transcoding ARRI camera footage (MXF/MOV) into DN
 - **Native macOS App:** Built with py2app, handles external drive permissions
 - **Dark "Matrix" Theme:** Professional dark UI with green accents
 - **Process in Place:** Source files stay untouched on camera cards
+- **Per-Camera LUT Library:** Prompts once and remembers LUTs per camera family
 - **Alphabetical Processing:** Files process in order (C001, C002, C003...)
 - **Pause/Resume:** Safely pause between files for transport
 - **Session-Based Tracking:** Completed list and reports only show current session
@@ -88,7 +104,7 @@ source venv/bin/activate
 python setup.py py2app
 ```
 
-The built app will be in `dist/Field Ingest Engine.app`
+The built app will be in `dist/10-2 Transcoder.app`
 
 ## Configuration
 

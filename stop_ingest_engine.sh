@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Stop Ingest Engine v2
+# Stop Transcoder v2
 #
 
-echo "Stopping Ingest Engine..."
+echo "Stopping Transcoder..."
 
 # First try graceful shutdown
 pkill -f "python.*main.py"
@@ -18,7 +18,7 @@ if [ "$REMAINING" -gt 0 ]; then
     echo "WARNING: $REMAINING process(es) still running!"
     pgrep -af "python.*main.py"
 else
-    echo "Ingest Engine stopped."
+    echo "Transcoder stopped."
 fi
 
 # Clean up lock files

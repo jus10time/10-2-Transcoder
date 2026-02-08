@@ -1,5 +1,5 @@
 """
-Simple API server for the Ingest Engine.
+Simple API server for the Transcoder.
 Exposes status, history, folder contents, and logs via HTTP.
 This allows the web backend to run on a separate server.
 """
@@ -19,7 +19,7 @@ _config = None
 _base_dir = None
 
 class IngestAPIHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for the Ingest Engine API."""
+    """HTTP request handler for the Transcoder API."""
 
     def log_message(self, format, *args):
         """Override to use our logging instead of printing to stderr."""
@@ -61,7 +61,7 @@ class IngestAPIHandler(BaseHTTPRequestHandler):
             elif path == '/api/health':
                 self._send_json_response({"status": "ok"})
             elif path == '/':
-                self._send_json_response({"message": "Ingest Engine API", "endpoints": ["/api/status", "/api/history", "/api/logs", "/api/folders/{name}", "/api/health"]})
+                self._send_json_response({"message": "Transcoder API", "endpoints": ["/api/status", "/api/history", "/api/logs", "/api/folders/{name}", "/api/health"]})
             else:
                 self._send_json_response({"error": "Not found"}, 404)
         except Exception as e:
