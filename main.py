@@ -378,7 +378,7 @@ def main(path_overrides=None):
     """
     Entry point: parses args, loads config, and starts the engine.
     """
-    # acquire_lock()
+    acquire_lock()
 
     # CLI arguments can still be used if the app is not run from the GUI
     parser = argparse.ArgumentParser(description="10-2 Transcoder.")

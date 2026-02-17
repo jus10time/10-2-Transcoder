@@ -345,43 +345,56 @@ def process_clip(source_path: str, config: ConfigParser):
             # --- 1. Run ARRI CLI ---
             logging.info("Step 1: Baking ARRI Look with ART CLI...")
             update_status(status_path, {"status": "processing", "file": filename, "progress": 0, "stage": "ARRI Processing", "elapsed": 0})
-            art_cmd = [
+            use_target_colorspace = settings.get("art_use_target_colorspace", "true").strip().lower() in ("1", "true", "yes", "on")
+            base_art_cmd = [
                 art_cli_path,
                 "process",
                 "--input", source_path,
                 "--output", intermediate_path,
                 "--embedded-look",
-                "--target-colorspace", settings['art_colorspace'],
                 "--video-codec", "prores422"
             ]
-            logging.info(f"Running ART CLI: {' '.join(art_cmd)}")
+            if use_target_colorspace:
+                base_art_cmd += ["--target-colorspace", settings['art_colorspace']]
+
+            def _run_art(cmd: list[str]) -> tuple[int, str, str, float]:
+                logging.info(f"Running ART CLI: {' '.join(cmd)}")
+                art_start_time = time.time()
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+                # Update status while ART is processing
+                while process.poll() is None:
+                    elapsed = time.time() - art_start_time
+                    update_status(status_path, {
+                        "status": "processing",
+                        "file": filename,
+                        "progress": 0,
+                        "stage": "ARRI Processing",
+                        "elapsed": round(elapsed, 1)
+                    })
+                    # Print progress to console
+                    sys.stdout.write(f'\rARRI Processing: Elapsed {str(timedelta(seconds=int(elapsed)))}...')
+                    sys.stdout.flush()
+                    time.sleep(1)
+
+                stdout, stderr = process.communicate()
+                sys.stdout.write('\n')
+                art_elapsed = time.time() - art_start_time
+                return process.returncode, stdout or "", stderr or "", art_elapsed
 
             # Run ART CLI with progress updates showing elapsed time
-            art_start_time = time.time()
-            process = subprocess.Popen(art_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            rc, stdout, stderr, art_elapsed = _run_art(base_art_cmd)
 
-            # Update status while ART is processing
-            while process.poll() is None:
-                elapsed = time.time() - art_start_time
-                update_status(status_path, {
-                    "status": "processing",
-                    "file": filename,
-                    "progress": 0,
-                    "stage": "ARRI Processing",
-                    "elapsed": round(elapsed, 1)
-                })
-                # Print progress to console
-                sys.stdout.write(f'\rARRI Processing: Elapsed {str(timedelta(seconds=int(elapsed)))}...')
-                sys.stdout.flush()
-                time.sleep(1)
+            if rc != 0:
+                # Fallback for newer ART behavior: target-colorspace only valid with DRT LUTs
+                err_text = (stdout + "\n" + stderr).lower()
+                if "target-colorspace argument is only valid for embedded looks with drt luts" in err_text:
+                    logging.warning("ART CLI rejected --target-colorspace for this embedded look; retrying without it.")
+                    fallback_cmd = [arg for arg in base_art_cmd if arg not in ("--target-colorspace", settings['art_colorspace'])]
+                    rc, stdout, stderr, art_elapsed = _run_art(fallback_cmd)
 
-            # Get the output
-            stdout, stderr = process.communicate()
-            sys.stdout.write('\n')
-            art_elapsed = time.time() - art_start_time
-
-            if process.returncode != 0:
-                logging.error(f"ART CLI failed with exit code {process.returncode}")
+            if rc != 0:
+                logging.error(f"ART CLI failed with exit code {rc}")
                 if stdout:
                     logging.error(f"ART CLI stdout: {stdout}")
                 if stderr:
@@ -391,7 +404,7 @@ def process_clip(source_path: str, config: ConfigParser):
                     partial_size = os.path.getsize(intermediate_path)
                     logging.error(f"Partial intermediate file exists ({partial_size} bytes) - cleaning up")
                     os.remove(intermediate_path)
-                raise subprocess.CalledProcessError(process.returncode, art_cmd, stdout, stderr)
+                raise subprocess.CalledProcessError(rc, base_art_cmd, stdout, stderr)
 
             logging.info(f"ART CLI finished successfully in {str(timedelta(seconds=int(art_elapsed)))}")
             if stdout:
